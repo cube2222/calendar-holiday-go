@@ -38,6 +38,7 @@ var globalSessionDateParams map[string]startEnd
 
 // Sorry for the placeholderish session usage of the state variable. Shouldn't be used in production. Never ever.
 // 22:25-23:31
+// 23:55-23:57
 
 func main() {
 	globalSessionDateParams = make(map[string]startEnd)
@@ -64,7 +65,7 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 
 	curSession := uuid.NewV4().String()
 
-	globalSessionDateParams[curSession] = curStartEnd
+	globalSessionDateParams[curSession] = curStartEnd // Save session params so that when the user logs in he'll get his answer.
 
 	url := googleOauthConfig.AuthCodeURL(curSession)
 
@@ -74,7 +75,7 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 func handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 	state := r.FormValue("state")
 
-	curStartEnd, ok := globalSessionDateParams[state]
+	curStartEnd, ok := globalSessionDateParams[state] // Get params from session
 
 	if ok == false {
 		fmt.Fprint(w, "Your Oauth2 state has not been found.")
@@ -95,8 +96,8 @@ func handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "Couldn't create calendar service.")
 		return
 	}
-
-	eventList, err := calendarService.Events.List("primary").TimeMin(curStartEnd.start.Format(time.RFC3339)).TimeMax(curStartEnd.end.Format(time.RFC3339)).MaxResults(30).Do()
+	// Get the events
+	eventList, err := calendarService.Events.List("primary").TimeMin(curStartEnd.start.Format(time.RFC3339)).TimeMax(curStartEnd.end.Format(time.RFC3339)).Do()
 	if err != nil {
 		fmt.Fprint(w, err)
 		return
@@ -108,12 +109,11 @@ func handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 	for _, item := range eventList.Items {
 		allEventList = append(allEventList, item)
 	}
-
+	// If there are more pages, get all events from there
 	for eventList.NextPageToken != "" {
 		eventList, err = calendarService.Events.List("primary").
 			TimeMin(curStartEnd.start.Format(time.RFC3339)).
 			TimeMax(curStartEnd.end.Format(time.RFC3339)).
-			MaxResults(30).
 			PageToken(eventList.NextPageToken).
 			Do()
 		if err != nil {
@@ -129,7 +129,7 @@ func handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 	plannedEventList := make([]plannedEvent, 0, 30)
 
 	for _, item := range allEventList {
-		if item.Start.DateTime == "" {
+		if item.Start.DateTime == "" { // Means it's all day
 			curStart, err := time.Parse("2006-01-02", item.Start.Date)
 			curEnd, err := time.Parse("2006-01-02", item.End.Date)
 			if err != nil {
@@ -147,7 +147,15 @@ func handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 	holidaysLeft := 26
 
 	for _, item := range plannedEventList {
-		holidaysLeft = holidaysLeft - int(item.timespan.end.Sub(item.timespan.start).Hours()/24)
+		holiday := false
+		for _, item := range item.tags {
+			if item == "holiday" || item == "urlop" {
+				holiday = true
+			}
+		}
+		if holiday {
+			holidaysLeft = holidaysLeft - int(item.timespan.end.Sub(item.timespan.start).Hours() / 24)
+		}
 	}
 
 	fmt.Fprintln(w, holidaysLeft)
